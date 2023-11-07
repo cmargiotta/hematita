@@ -18,7 +18,6 @@
         rust = pkgs.rust-bin.stable.latest.default.override
           {
             extensions = [ "rust-src" "rust-analyzer" ];
-            targets = [ "wasm32-unknown-unknown" ];
           };
       in
       rec {
@@ -31,20 +30,9 @@
 
           buildInputs = with pkgs; [
             git
-            openssl
-            cargo-generate
-            docker-compose
-            nodejs_20
           ] ++ [ rust ];
 
           nativeBuildInputs = with pkgs; [ pkg-config ];
-
-          shellHook = ''
-            export PATH=$PATH:$PWD/.cargo/bin
-
-            #cargo install dioxus-cli
-            cargo install cargo-watch
-          '';
         };
       });
 }
