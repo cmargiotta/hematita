@@ -5,7 +5,6 @@ use std::{
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(bound(deserialize = "'de: 'static"))]
 pub enum Constant {
     String(String),
     Integer(i64),

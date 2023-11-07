@@ -78,21 +78,33 @@ macro_rules! binary_equality {
 	}
 }
 
-#[derive(Clone, Copy)]
-enum Reference<'s> {
+#[derive(Clone)]
+enum Reference {
     Local(usize),
-    Global(&'s str),
+    Global(String),
 }
 
-impl<'s> From<usize> for Reference<'s> {
+impl From<usize> for Reference {
     fn from(local: usize) -> Self {
         Self::Local(local)
     }
 }
 
-impl<'s> From<&'s str> for Reference<'s> {
-    fn from(global: &'s str) -> Self {
+impl From<&usize> for Reference {
+    fn from(local: &usize) -> Self {
+        Self::Local(local.clone())
+    }
+}
+
+impl From<String> for Reference {
+    fn from(global: String) -> Self {
         Self::Global(global)
+    }
+}
+
+impl From<&String> for Reference {
+    fn from(global: &String) -> Self {
+        Self::Global(global.clone())
     }
 }
 
@@ -143,7 +155,7 @@ impl<'v, 'f, 'n> StackFrame<'v, 'f, 'n> {
     /// Panics
     /// ------
     /// Panics if any encountered lock is poisoned.
-    fn reference<'s>(&self, reference: impl Into<Reference<'s>>) -> Nillable<'n> {
+    fn reference<'s>(&self, reference: impl Into<Reference>) -> Nillable<'n> {
         match reference.into() {
             Reference::Global(name) => {
                 // TODO: Return this error? Like value.rs, there are a lot more of
@@ -166,7 +178,7 @@ impl<'v, 'f, 'n> StackFrame<'v, 'f, 'n> {
     /// Panics
     /// ------
     /// Panics if any encountered lock is poisoned.
-    fn write_reference<'s>(&mut self, reference: impl Into<Reference<'s>>, value: Nillable<'n>) {
+    fn write_reference<'s>(&mut self, reference: impl Into<Reference>, value: Nillable<'n>) {
         match reference.into() {
             Reference::Global(name) => {
                 let mut global = self
@@ -285,7 +297,7 @@ impl<'v, 'f, 'n> StackFrame<'v, 'f, 'n> {
                 break Ok(Table::default().arc());
             }
 
-            match chunk.opcodes[current_opcode] {
+            match &chunk.opcodes[current_opcode] {
                 OpCode::Call {
                     function,
                     arguments,
@@ -313,7 +325,7 @@ impl<'v, 'f, 'n> StackFrame<'v, 'f, 'n> {
                 } => {
                     let indexee = self.reference(indexee);
                     let index = self.reference(index);
-                    self.index_read(indexee, index, destination)?;
+                    self.index_read(indexee, index, *destination)?;
                 }
 
                 OpCode::IndexWrite {
@@ -601,7 +613,7 @@ impl<'v, 'f, 'n> StackFrame<'v, 'f, 'n> {
                     operation,
                     r#if: None,
                 } => {
-                    current_opcode = operation as usize;
+                    current_opcode = *operation as usize;
                     continue;
                 }
 
@@ -611,12 +623,12 @@ impl<'v, 'f, 'n> StackFrame<'v, 'f, 'n> {
                 } => {
                     let r#if = self.reference(r#if);
                     if r#if.nillable().coerce_to_bool() {
-                        current_opcode = operation as usize;
+                        current_opcode = *operation as usize;
                         continue;
                     }
                 }
 
-                OpCode::Return { result } => match self.registers.get(result) {
+                OpCode::Return { result } => match self.registers.get(*result) {
                     Some(&MaybeUpValue::Normal(NonNil(Value::Table(ref result)))) => {
                         return Ok(result.clone())
                     }
@@ -639,13 +651,13 @@ impl<'v, 'f, 'n> StackFrame<'v, 'f, 'n> {
                     actor, destination, ..
                 } => {
                     // TODO: error handling
-                    self.registers[destination] = self.registers[actor].clone();
+                    self.registers[*destination] = self.registers[*actor].clone();
                 }
 
                 OpCode::LoadConst {
                     constant, register, ..
                 } => {
-                    let constant = self.function.chunk.constants.get(constant as usize);
+                    let constant = self.function.chunk.constants.get(*constant as usize);
                     let constant = match constant.cloned() {
                         Some(Constant::String(string)) => {
                             NonNil(Value::String(string.into_boxed_str()))
@@ -681,18 +693,18 @@ impl<'v, 'f, 'n> StackFrame<'v, 'f, 'n> {
 
                 OpCode::LoadUpValue { register, up_value } => {
                     // TODO: Error handling.
-                    let up_value = self.function.up_values[up_value]
+                    let up_value = self.function.up_values[*up_value]
                         .lock()
                         .expect("poison error");
-                    self.registers[register] = MaybeUpValue::Normal(up_value.clone());
+                    self.registers[*register] = MaybeUpValue::Normal(up_value.clone());
                 }
 
                 OpCode::SaveUpValue { up_value, register } => {
                     // TODO: Error handling.
-                    let mut up_value = self.function.up_values[up_value]
+                    let mut up_value = self.function.up_values[*up_value]
                         .lock()
                         .expect("poison error");
-                    *up_value = match self.registers[register] {
+                    *up_value = match self.registers[*register] {
                         MaybeUpValue::Normal(ref value) => value.clone(),
                         MaybeUpValue::UpValue(ref value) => {
                             value.lock().expect("poison error").clone()
@@ -775,7 +787,7 @@ impl<'v, 'f, 'n> StackFrame<'v, 'f, 'n> {
 /// won't do much more than corrupt the state of the currently executing
 /// function.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum OpCode<'s> {
+pub enum OpCode {
     /// Calls a function with the name [function], with the arguments array
     /// [arguments], and stores the result array in [destination]. [arguments]
     /// must be a lua array (a table, typically with numbered keys starting from
@@ -874,13 +886,13 @@ pub enum OpCode<'s> {
     },
 
     LoadGlobal {
-        global: &'s str,
+        global: String,
         register: usize,
     },
 
     SaveGlobal {
         register: usize,
-        global: &'s str,
+        global: String,
     },
 
     LoadUpValue {
@@ -932,7 +944,7 @@ pub enum OpCode<'s> {
     NoOp,
 }
 
-impl<'s> Display for OpCode<'s> {
+impl<'s> Display for OpCode {
     fn fmt(&self, f: &mut Formatter) -> FMTResult {
         match self {
             Self::Call {
@@ -1157,12 +1169,11 @@ impl From<UnaryOperator> for UnaryOperation {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(bound(deserialize = "'de: 'static"))]
 pub struct Chunk {
     pub registers: usize,
     pub up_values: Vec<(usize, bool)>,
     pub constants: Vec<Constant>,
-    pub opcodes: Vec<OpCode<'static>>,
+    pub opcodes: Vec<OpCode>,
 }
 
 impl Chunk {
@@ -1231,17 +1242,17 @@ macro_rules! byte_code {
 
 		#[allow(non_camel_case_types)]
 		struct byte_code<F>
-				where F: Fn(&mut usize) -> Option<OpCode<'static>> + 'static {
+				where F: Fn(&mut usize) -> Option<OpCode> + 'static {
 			index: usize,
 			next: F,
 			//_d: std::marker::PhantomData<&'f ()>
 		}
 
 		impl<F> Iterator for byte_code<F>
-				where F: Fn(&mut usize) -> Option<OpCode<'static>> {
-			type Item = OpCode<'static>;
+				where F: Fn(&mut usize) -> Option<OpCode> {
+			type Item = OpCode;
 
-			fn next(&mut self) -> Option<OpCode<'static>> {
+			fn next(&mut self) -> Option<OpCode> {
 				(self.next)(&mut self.index)
 			}
 		}
